@@ -9,50 +9,27 @@ on:
         type: boolean
         default: false
       build_firmware:
-        description: "Build and publish firmware"
+        description: "Build and publish firmware (false = 只准备并校验配置, 不编译)"
         required: false
         type: boolean
         default: true
-      badge_status:
-        description: "badge status var（keep empty）"
-        required: false
-        type: string
-        default: ''
 
-# 默认不给任何权限, 由各 job 按需声明
+# 默认不给任何权限, 由 job 按需声明
 permissions: {}
 
-# 避免多个构建同时跑, 也不会取消已经在跑的构建
+# 同一时间只跑一个构建, 不取消已经在跑的
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
   build:
-    if: github.event.repository.owner.id == github.event.sender.id && inputs.badge_status == ''
+    if: github.event.repository.owner.id == github.event.sender.id
     uses: ./.github/workflows/OpenWrt-Matrix.yml
     # 被调用的工作流权限不能超过这里给的范围
-    # 先按"发布固件 + 同步徽章"给, 看完 Matrix 文件后再收紧
+    # Matrix 里 build 只用只读, 只有 release 任务用 contents: write
     permissions:
       contents: write
-      actions: write
     with:
-      targets: "X86"
       upload_source: ${{ inputs.upload_source }}
       build_firmware: ${{ inputs.build_firmware }}
-
-  sync_badge:
-    if: inputs.badge_status != ''
-    runs-on: ubuntu-latest
-    permissions: {}
-    env:
-      BADGE_STATUS: ${{ inputs.badge_status }}
-    steps:
-      - name: Sync badge status
-        run: |
-          echo "Syncing badge status ...( ${BADGE_STATUS} )"
-          if [ "${BADGE_STATUS}" = "success" ]; then
-            exit 0
-          else
-            exit 1
-          fi
