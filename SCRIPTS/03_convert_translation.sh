@@ -1,52 +1,63 @@
 #!/bin/bash
-# [CTCGFW]immortalwrt
-# Use it under GPLv3, please.
-# --------------------------------------------------------
-# Convert translation files zh-cn to zh_Hans
-# The script is still in testing, welcome to report bugs.
+# 03_convert_translation.sh  (在 openwrt/ 目录内运行, 须在 02_prepare_package.sh 之后)
+# 作用: 把第三方包里的 zh-cn 翻译改成官方 LuCI 使用的 zh_Hans
+# 只处理 package/new(第三方包), 不触碰官方 feeds
+set -euo pipefail
 
-po_file="$({ find -type f | grep -E "[a-z0-9]+\.zh\-cn.+po"; } 2>"/dev/null")"
-for a in ${po_file}; do
-  [ -n "$(grep "Language: zh_CN" "$a")" ] && sed -i "s/Language: zh_CN/Language: zh_Hans/g" "$a"
-  po_new_file="$(echo -e "$a" | sed "s/zh-cn/zh_Hans/g")"
-  mv "$a" "${po_new_file}" 2>"/dev/null"
-done
+ROOT="package/new"
+[ -d "$ROOT" ] || { echo "错误: 找不到 ${ROOT}, 请确认 02_prepare_package.sh 已运行" >&2; exit 1; }
 
-po_file2="$({ find -type f | grep "/zh-cn/" | grep "\.po"; } 2>"/dev/null")"
-for b in ${po_file2}; do
-  [ -n "$(grep "Language: zh_CN" "$b")" ] && sed -i "s/Language: zh_CN/Language: zh_Hans/g" "$b"
-  po_new_file2="$(echo -e "$b" | sed "s/zh-cn/zh_Hans/g")"
-  mv "$b" "${po_new_file2}" 2>"/dev/null"
-done
+# 1. 修正 .po 文件头里的语言标识
+while IFS= read -r -d '' f; do
+  if grep -q 'Language: zh_CN' "$f"; then
+    sed -i 's/Language: zh_CN/Language: zh_Hans/' "$f"
+    echo "修正语言头: $f"
+  fi
+done < <(find "$ROOT" -type f -name '*.po' -path '*zh-cn*' -print0)
 
-lmo_file="$({ find -type f | grep -E "[a-z0-9]+\.zh_Hans.+lmo"; } 2>"/dev/null")"
-for c in ${lmo_file}; do
-  lmo_new_file="$(echo -e "$c" | sed "s/zh_Hans/zh-cn/g")"
-  mv "$c" "${lmo_new_file}" 2>"/dev/null"
-done
+# 2. 重命名文件名里带 zh-cn 的 .po 文件
+while IFS= read -r -d '' f; do
+  new="$(dirname "$f")/$(basename "$f" | sed 's/zh-cn/zh_Hans/g')"
+  if [ -e "$new" ]; then
+    echo "跳过(目标已存在): $f"
+    continue
+  fi
+  mv -- "$f" "$new"
+  echo "重命名文件: $f -> $new"
+done < <(find "$ROOT" -type f -name '*zh-cn*.po' -print0)
 
-lmo_file2="$({ find -type f | grep "/zh_Hans/" | grep "\.lmo"; } 2>"/dev/null")"
-for d in ${lmo_file2}; do
-  lmo_new_file2="$(echo -e "$d" | sed "s/zh_Hans/zh-cn/g")"
-  mv "$d" "${lmo_new_file2}" 2>"/dev/null"
-done
+# 3. 重命名名为 zh-cn 的目录(由深到浅)
+while IFS= read -r -d '' d; do
+  new="$(dirname "$d")/zh_Hans"
+  if [ -e "$new" ]; then
+    echo "警告: ${new} 已存在, 跳过 ${d}" >&2
+    continue
+  fi
+  mv -- "$d" "$new"
+  echo "重命名目录: $d -> $new"
+done < <(find "$ROOT" -depth -type d -name 'zh-cn' -print0)
 
-po_dir="$({ find -type d | grep "/zh-cn" | sed "/\.po/d" | sed "/\.lmo/d"; } 2>"/dev/null")"
-for e in ${po_dir}; do
-  po_new_dir="$(echo -e "$e" | sed "s/zh-cn/zh_Hans/g")"
-  mv "$e" "${po_new_dir}" 2>"/dev/null"
-done
+# 4. Makefile: zh-cn -> zh_Hans, 但 .lmo 输出名保持 zh-cn
+while IFS= read -r -d '' mk; do
+  if grep -qE 'zh-cn|zh_Hans\.lmo' "$mk"; then
+    sed -i -e 's/zh-cn/zh_Hans/g' -e 's/zh_Hans\.lmo/zh-cn.lmo/g' "$mk"
+    echo "修改 Makefile: $mk"
+  fi
+done < <(find "$ROOT" -type f -name Makefile -print0)
 
-makefile_file="$({ find -type f | grep Makefile | sed "/Makefile./d"; } 2>"/dev/null")"
-for f in ${makefile_file}; do
-  [ -n "$(grep "zh-cn" "$f")" ] && sed -i "s/zh-cn/zh_Hans/g" "$f"
-  [ -n "$(grep "zh_Hans.lmo" "$f")" ] && sed -i "s/zh_Hans.lmo/zh-cn.lmo/g" "$f"
-done
+# 5. 第三方包放在 package/new 后, 相对路径的 include 要改成绝对路径
+#    只改 include 行, 不动文件里其他内容
+while IFS= read -r -d '' mk; do
+  sed -i -E \
+    -e 's#^(include[[:space:]]+)\.\./\.\./lang/#\1$(TOPDIR)/feeds/packages/lang/#' \
+    -e 's#^(include[[:space:]]+)\.\./\.\./luci\.mk#\1$(TOPDIR)/feeds/luci/luci.mk#' \
+    "$mk"
+done < <(find "$ROOT" -type f -name Makefile -print0)
 
-makefile_file="$({ find package -type f | grep Makefile | sed "/Makefile./d"; } 2>"/dev/null")"
-for g in ${makefile_file}; do
-  [ -n "$(grep "golang-package.mk" "$g")" ] && sed -i "s|\.\./\.\.|$\(TOPDIR\)/feeds/packages|g" "$g"
-  [ -n "$(grep "luci.mk" "$g")" ] && sed -i "s|\.\./\.\.|$\(TOPDIR\)/feeds/luci|g" "$g"
-done
+# 6. 提示: 第三方源码里预编译的 .lmo 是二进制文件, 无法审计, 发现就提醒
+if find "$ROOT" -type f -name '*.lmo' -print -quit | grep -q .; then
+  echo "警告: 第三方包中含有预编译 .lmo 二进制文件, 建议确认来源:" >&2
+  find "$ROOT" -type f -name '*.lmo' >&2
+fi
 
 exit 0
