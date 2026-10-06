@@ -121,10 +121,12 @@ jobs:
         run: |
           bash ../SCRIPTS/03_convert_translation.sh
           bash ../SCRIPTS/05_create_acl_for_luci.sh -a
-          bash ../SCRIPTS/08_fix_permissions.sh
 
       - name: Make defconfig and verify nftables-only
         working-directory: openwrt
+        env:
+          # 在仓库变量里新建 STRICT_SEED=1, 可让 seed 与最终配置不一致直接失败
+          STRICT_SEED: ${{ vars.STRICT_SEED || '0' }}
         run: |
           make defconfig
           bash ../SCRIPTS/07_verify_nft.sh
@@ -188,6 +190,36 @@ jobs:
           # 不使用 IGNORE_ERRORS: 任何包编译失败都必须让构建失败
           make -j"$(($(nproc) + 1))" || make -j1 V=s
 
+      - name: Audit rootfs permissions
+        if: inputs.build_firmware
+        run: |
+          roots=( openwrt/build_dir/target-*/root-* )
+          if [ ! -d "${roots[0]:-}" ]; then
+            echo "::warning::找不到 rootfs 目录, 跳过权限审计"
+            exit 0
+          fi
+          root="${roots[0]}"
+          echo "审计目录: $root"
+          bad=0
+          ww="$(find "$root" -type f -perm -0002 -print)"
+          if [ -n "$ww" ]; then
+            echo "错误: 存在全局可写文件:" >&2
+            echo "$ww" >&2
+            bad=1
+          fi
+          if [ -e "$root/etc/shadow" ]; then
+            mode="$(stat -c '%a' "$root/etc/shadow")"
+            if [ "$mode" != "600" ]; then
+              echo "错误: /etc/shadow 权限为 ${mode}, 应为 600" >&2
+              bad=1
+            fi
+          fi
+          echo "--- setuid/setgid 文件(仅供人工审计) ---"
+          find "$root" -type f \( -perm -4000 -o -perm -2000 \) -print || true
+          echo "---"
+          [ "$bad" -eq 0 ] || exit 1
+          echo "rootfs 权限审计通过"
+
       - name: Organize files
         if: inputs.build_firmware
         run: |
@@ -218,6 +250,17 @@ jobs:
           path: artifact/
           retention-days: 7
           if-no-files-found: error
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86-failure-logs
+          path: |
+            openwrt/logs/
+            openwrt/.config
+          retention-days: 7
+          if-no-files-found: ignore
 
   release:
     needs: build
