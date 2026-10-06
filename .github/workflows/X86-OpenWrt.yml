@@ -1,8 +1,6 @@
 name: X86-OpenWrt
 
 on:
-#  schedule:
-#    - cron: 5 6 * * 0
   workflow_dispatch:
     inputs:
       upload_source:
@@ -20,26 +18,40 @@ on:
         required: false
         type: string
         default: ''
-  watch:
-    types: started
+
+# 默认不给任何权限, 由各 job 按需声明
+permissions: {}
+
+# 避免多个构建同时跑, 也不会取消已经在跑的构建
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    uses: ./.github/workflows/OpenWrt-Matrix.yml
     if: github.event.repository.owner.id == github.event.sender.id && inputs.badge_status == ''
+    uses: ./.github/workflows/OpenWrt-Matrix.yml
+    # 被调用的工作流权限不能超过这里给的范围
+    # 先按"发布固件 + 同步徽章"给, 看完 Matrix 文件后再收紧
+    permissions:
+      contents: write
+      actions: write
     with:
       targets: "X86"
-      upload_source: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_source }}
-      build_firmware: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_firmware) || github.event_name != 'workflow_dispatch' }}
+      upload_source: ${{ inputs.upload_source }}
+      build_firmware: ${{ inputs.build_firmware }}
 
   sync_badge:
     if: inputs.badge_status != ''
     runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      BADGE_STATUS: ${{ inputs.badge_status }}
     steps:
       - name: Sync badge status
         run: |
-          echo "Syncing badge status ...( ${{ inputs.badge_status }} )"
-          if [ "${{ inputs.badge_status }}" == "success" ]; then
+          echo "Syncing badge status ...( ${BADGE_STATUS} )"
+          if [ "${BADGE_STATUS}" = "success" ]; then
             exit 0
           else
             exit 1
