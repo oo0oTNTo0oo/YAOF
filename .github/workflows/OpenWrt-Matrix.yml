@@ -1,6 +1,17 @@
-name: X86-OpenWrt
+# Reusable workflow: 构建 X86 官方 OpenWrt 25.12 (纯 nftables)
+name: OpenWrt-Matrix
 
 on:
+  workflow_call:
+    inputs:
+      upload_source:
+        required: false
+        type: boolean
+        default: false
+      build_firmware:
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       upload_source:
@@ -9,50 +20,213 @@ on:
         type: boolean
         default: false
       build_firmware:
-        description: "Build and publish firmware"
+        description: "Build and publish firmware (false = 只准备并校验配置, 不编译)"
         required: false
         type: boolean
         default: true
-      badge_status:
-        description: "badge status var（keep empty）"
-        required: false
-        type: string
-        default: ''
 
-# 默认不给任何权限, 由各 job 按需声明
-permissions: {}
+permissions:
+  contents: read
 
-# 避免多个构建同时跑, 也不会取消已经在跑的构建
 concurrency:
-  group: ${{ github.workflow }}
+  group: x86-build
   cancel-in-progress: false
 
 jobs:
   build:
-    if: github.event.repository.owner.id == github.event.sender.id && inputs.badge_status == ''
-    uses: ./.github/workflows/OpenWrt-Matrix.yml
-    # 被调用的工作流权限不能超过这里给的范围
-    # 先按"发布固件 + 同步徽章"给, 看完 Matrix 文件后再收紧
-    permissions:
-      contents: write
-      actions: write
-    with:
-      targets: "X86"
-      upload_source: ${{ inputs.upload_source }}
-      build_firmware: ${{ inputs.build_firmware }}
-
-  sync_badge:
-    if: inputs.badge_status != ''
-    runs-on: ubuntu-latest
-    permissions: {}
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
     env:
-      BADGE_STATUS: ${{ inputs.badge_status }}
+      # 以下变量在 仓库 Settings -> Secrets and variables -> Actions -> Variables 中设置
+      # 第三方包的 commit 必须是完整 40 位, 留空会让构建直接失败
+      MWAN3_COMMIT: ${{ vars.MWAN3_COMMIT }}
+      LUCI_MWAN3_COMMIT: ${{ vars.LUCI_MWAN3_COMMIT }}
+      PW2_COMMIT: ${{ vars.PW2_COMMIT }}
+      PW_PKGS_COMMIT: ${{ vars.PW_PKGS_COMMIT }}
+      MOSDNS_COMMIT: ${{ vars.MOSDNS_COMMIT }}
+      # 可选: 留空则自动取 25.12 最新正式 tag
+      OPENWRT_REF: ${{ vars.OPENWRT_REF }}
+      OPENWRT_COMMIT: ${{ vars.OPENWRT_COMMIT }}
+    outputs:
+      tag: ${{ steps.info.outputs.tag }}
     steps:
-      - name: Sync badge status
+      - name: Show system info
         run: |
-          echo "Syncing badge status ...( ${BADGE_STATUS} )"
-          if [ "${BADGE_STATUS}" = "success" ]; then
-            exit 0
-          else
+          echo "CPU cores: $(nproc)"
+          grep 'model name' /proc/cpuinfo | head -n1
+
+      - name: Free disk space
+        if: inputs.build_firmware
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -y -qq install --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3 python3-setuptools \
+            python3-pyelftools libelf-dev rsync swig unzip zlib1g-dev file wget \
+            zstd xsltproc help2man intltool patch perl-modules pkg-config \
+            libxml-parser-perl libthread-queue-any-perl jq quilt
+          df -h
+
+      - name: Get official OpenWrt source
+        run: |
+          cp -r ./SCRIPTS/X86/. ./SCRIPTS/
+          bash ./SCRIPTS/01_get_ready.sh
+
+      - name: Prepare packages
+        working-directory: openwrt
+        run: |
+          bash ../SCRIPTS/02_prepare_package.sh
+          if [ -f ../SCRIPTS/02_target_only.sh ]; then bash ../SCRIPTS/02_target_only.sh; fi
+          bash ../SCRIPTS/04_remove_upx.sh
+
+      - name: Apply seed
+        working-directory: openwrt
+        run: cp -f ../SEED/X86/config.seed .config
+
+      - name: Post-process
+        working-directory: openwrt
+        run: |
+          bash ../SCRIPTS/03_convert_translation.sh
+          bash ../SCRIPTS/05_create_acl_for_luci.sh -a
+          bash ../SCRIPTS/08_fix_permissions.sh
+
+      - name: Make defconfig and verify nftables-only
+        working-directory: openwrt
+        run: |
+          make defconfig
+          bash ../SCRIPTS/07_verify_nft.sh
+
+      - name: Export build info and audit files
+        id: info
+        run: |
+          mkdir -p audit
+          ref="$(git -C openwrt describe --tags --always)"
+          commit="$(git -C openwrt rev-parse HEAD)"
+          tag="x86-${ref}-$(date -u +%Y%m%d)-r${GITHUB_RUN_NUMBER}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          (cd openwrt && ./scripts/diffconfig.sh) > audit/diffconfig.txt
+          cp openwrt/.config audit/full.config
+          {
+            echo "# Build info"
+            echo "- OpenWrt: ${ref} (${commit})"
+            echo "- mwan3: ${MWAN3_COMMIT}"
+            echo "- luci-app-mwan3: ${LUCI_MWAN3_COMMIT}"
+            echo "- passwall2: ${PW2_COMMIT}"
+            echo "- passwall-packages: ${PW_PKGS_COMMIT}"
+            echo "- luci-app-mosdns: ${MOSDNS_COMMIT}"
+            echo "- workflow commit: ${GITHUB_SHA}"
+            echo "## Official feeds"
+            for d in openwrt/feeds/*/; do
+              if [ -d "${d}.git" ]; then
+                echo "- $(basename "$d"): $(git -C "$d" rev-parse HEAD)"
+              fi
+            done
+          } > audit/BUILD-INFO.md
+
+      - name: Upload audit files
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86-audit
+          path: audit/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Pack source (optional)
+        if: inputs.upload_source
+        run: tar -cf "openwrt-source-x86-${GITHUB_RUN_ID}.tar" openwrt
+
+      - name: Upload source (optional)
+        if: inputs.upload_source
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-source-x86-${{ github.run_id }}
+          path: openwrt-source-x86-${{ github.run_id }}.tar
+          retention-days: 5
+
+      - name: Make download
+        if: inputs.build_firmware
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile
+        if: inputs.build_firmware
+        working-directory: openwrt
+        run: |
+          # 不再使用 IGNORE_ERRORS: 任何包编译失败都必须让构建失败
+          make -j"$(($(nproc) + 1))" || make -j1 V=s
+
+      - name: Organize files
+        if: inputs.build_firmware
+        run: |
+          shopt -s nullglob
+          out="$PWD/artifact"
+          mkdir -p "$out"
+          cd openwrt/bin/targets/x86/64
+          imgs=( *squashfs-combined-efi.img.gz )
+          if [ "${#imgs[@]}" -ne 1 ]; then
+            echo "错误: 期望 1 个 squashfs-combined-efi 镜像, 实际 ${#imgs[@]} 个" >&2
+            ls -l
             exit 1
           fi
+          cp -- "${imgs[0]}" "$out/"
+          cp -f -- *.manifest sha256sums *.buildinfo "$out/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/audit/BUILD-INFO.md" "$out/"
+          cd "$out"
+          sha256sum -- * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt ./
+          ls -lh
+
+      - name: Upload firmware
+        if: inputs.build_firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86-firmware
+          path: artifact/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: inputs.build_firmware
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: x86-firmware
+          path: artifact
+
+      - name: Verify checksums
+        working-directory: artifact
+        run: sha256sum -c SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          # tag 已存在时 gh 会报错, 不会覆盖旧版本
+          gh release create "$TAG" artifact/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "OpenWrt x86 ${TAG}" \
+            --notes-file artifact/BUILD-INFO.md
