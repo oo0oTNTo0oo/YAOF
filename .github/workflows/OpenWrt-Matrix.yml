@@ -42,7 +42,7 @@ jobs:
         shell: bash
     env:
       # 以下变量在 仓库 Settings -> Secrets and variables -> Actions -> Variables 中设置
-      # 第三方包的 commit 必须是完整 40 位, 留空会让构建直接失败
+      # 第三方包的 commit 必须是完整 40 位, 缺失或格式不对会让构建立刻失败
       MWAN3_COMMIT: ${{ vars.MWAN3_COMMIT }}
       LUCI_MWAN3_COMMIT: ${{ vars.LUCI_MWAN3_COMMIT }}
       PW2_COMMIT: ${{ vars.PW2_COMMIT }}
@@ -57,14 +57,32 @@ jobs:
       - name: Show system info
         run: |
           echo "CPU cores: $(nproc)"
-          grep 'model name' /proc/cpuinfo | head -n1
+          grep -m1 'model name' /proc/cpuinfo
+
+      - name: Check required variables
+        run: |
+          missing=0
+          for v in MWAN3_COMMIT LUCI_MWAN3_COMMIT PW2_COMMIT PW_PKGS_COMMIT MOSDNS_COMMIT; do
+            val="${!v:-}"
+            if ! [[ "$val" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "错误: 仓库变量 ${v} 未设置, 或不是 40 位 commit" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
 
       - name: Free disk space
         if: inputs.build_firmware
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force || true
-          df -h
+          sudo apt-get -qq clean
+          df -h /
+          avail="$(df --output=avail -BG / | tail -n1 | tr -dc '0-9')"
+          if [ "$avail" -lt 30 ]; then
+            echo "警告: 可用空间只有 ${avail}GB, 完整编译可能不够"
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,15 +103,13 @@ jobs:
           df -h
 
       - name: Get official OpenWrt source
-        run: |
-          cp -r ./SCRIPTS/X86/. ./SCRIPTS/
-          bash ./SCRIPTS/01_get_ready.sh
+        run: bash ./SCRIPTS/01_get_ready.sh
 
       - name: Prepare packages
         working-directory: openwrt
         run: |
           bash ../SCRIPTS/02_prepare_package.sh
-          if [ -f ../SCRIPTS/02_target_only.sh ]; then bash ../SCRIPTS/02_target_only.sh; fi
+          bash ../SCRIPTS/02_target_only.sh
           bash ../SCRIPTS/04_remove_upx.sh
 
       - name: Apply seed
@@ -169,7 +185,7 @@ jobs:
         if: inputs.build_firmware
         working-directory: openwrt
         run: |
-          # 不再使用 IGNORE_ERRORS: 任何包编译失败都必须让构建失败
+          # 不使用 IGNORE_ERRORS: 任何包编译失败都必须让构建失败
           make -j"$(($(nproc) + 1))" || make -j1 V=s
 
       - name: Organize files
@@ -188,6 +204,7 @@ jobs:
           cp -- "${imgs[0]}" "$out/"
           cp -f -- *.manifest sha256sums *.buildinfo "$out/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/audit/BUILD-INFO.md" "$out/"
+          cp "$GITHUB_WORKSPACE/audit/diffconfig.txt" "$out/"
           cd "$out"
           sha256sum -- * > ../SHA256SUMS.txt
           mv ../SHA256SUMS.txt ./
