@@ -1,11 +1,10 @@
 #!/bin/bash
+# 02_target_only.sh  (x86 专用, 在 openwrt/ 目录内运行)
+set -euo pipefail
 
-#sed -i 's/O2/O2 -march=x86-64-v2/g' include/target.mk
-
-# libsodium
-sed -i 's,no-mips16 no-lto,no-mips16,g' feeds/packages/libs/libsodium/Makefile
-
-echo '#!/bin/sh
+# 默认设备名与 Intel CPU 调度偏好(开机执行一次)
+cat > ./package/base-files/files/etc/rc.local <<'EOF'
+#!/bin/sh
 # Put your custom commands here that should be executed once
 # the system init finished. By default this file does nothing.
 
@@ -27,18 +26,32 @@ if [ -f "$PSTATE_STATUS_FILE" ]; then
 fi
 
 exit 0
-' > ./package/base-files/files/etc/rc.local
+EOF
+chmod 755 ./package/base-files/files/etc/rc.local
 
-#Vermagic
-latest_version="$(curl -s https://github.com/openwrt/openwrt/tags | grep -Eo "v[0-9\.]+\-*r*c*[0-9]*.tar.gz" | sed -n '/[2-9][5-9]/p' | sed -n 1p | sed 's/v//g' | sed 's/.tar.gz//g')"
-wget https://downloads.openwrt.org/releases/${latest_version}/targets/x86/64/profiles.json
-jq -r '.linux_kernel.vermagic' profiles.json >.vermagic
-sed -i -e 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
+# 预置文件: 先审计再放行
+# 这些文件会原样写进固件, 并且覆盖同名的系统文件, 必须逐个看过内容
+if [ -d ../PATCH/files ]; then
+  # 禁止覆盖账号、SSH、包管理器、启动脚本等敏感路径
+  for bad in etc/shadow etc/passwd etc/group etc/dropbear root/.ssh \
+             etc/rc.local etc/apk etc/opkg etc/sysupgrade.conf; do
+    if [ -e "../PATCH/files/${bad}" ]; then
+      echo "错误: PATCH/files 含敏感路径 ${bad}, 请审计后再决定是否放行" >&2
+      exit 1
+    fi
+  done
+  echo "===== PATCH/files 清单(含校验和, 请审计) ====="
+  (cd ../PATCH/files && find . -type f -exec sha256sum {} + | sort -k2)
+  rm -rf ./files
+  cp -a ../PATCH/files ./files
+fi
 
-# 预配置一些插件
-cp -rf ../PATCH/files ./files
-
-find ./ -name *.orig | xargs rm -f
-find ./ -name *.rej | xargs rm -f
+# 补丁失败的残留文件: .rej 表示有补丁没打上, 必须让构建失败, 不能悄悄删掉
+if find . -name '*.rej' -not -path './dl/*' -print -quit | grep -q .; then
+  echo "错误: 发现 .rej 文件, 说明有补丁应用失败:" >&2
+  find . -name '*.rej' -not -path './dl/*' >&2
+  exit 1
+fi
+find . -name '*.orig' -not -path './dl/*' -delete
 
 exit 0
