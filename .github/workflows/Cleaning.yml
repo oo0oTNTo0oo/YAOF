@@ -2,40 +2,78 @@ name: Cleaning
 
 on:
   schedule:
-    - cron: 1 1 * * 1
+    - cron: '1 1 * * 1'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只列出将被删除的内容, 不实际删除"
+        type: boolean
+        default: true
+
+# 默认不给任何权限, 由各 job 按需声明
+permissions: {}
+
+concurrency:
+  group: cleaning
+  cancel-in-progress: false
 
 jobs:
-  
-  Cleanup-Old-Releases:
+  cleanup-releases:
     runs-on: ubuntu-24.04
-    steps:  
-    - name: Delete Older Releases
-      uses: dev-drprasad/delete-older-releases@master
-      with:
-        keep_latest: 20
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: true
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KEEP: "20"
+      # 手动运行默认只预览; 定时运行没有该输入, 视为真删
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+    steps:
+      - name: Delete old releases (only x86- tags)
+        shell: bash
+        run: |
+          set -euo pipefail
+          list="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName,createdAt --jq 'map(select(.tagName | startswith("x86-"))) | sort_by(.createdAt) | reverse | .[($ENV.KEEP | tonumber):] | .[].tagName')"
+          count=0
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            count=$((count + 1))
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] 将删除 release 及 tag: $tag"
+            else
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              echo "已删除: $tag"
+            fi
+          done <<< "$list"
+          echo "共处理 ${count} 个旧 release (保留最新 ${KEEP} 个 x86- 前缀的发布)"
 
-  Cleanup-Old-Artifacts:
+  cleanup-runs:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RETAIN_DAYS: "30"
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
     steps:
-    - name: Cleanup Old Action Artifacts
-      uses: c-hive/gha-remove-artifacts@main
-      with:
-          age: '3 days'
-          skip-recent: 3
-      continue-on-error: true
-        
-  Cleanup-Workflow-Logs:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Cleanup Workflow Logs
-        uses: Mattraks/delete-workflow-runs@main
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 3
-        continue-on-error: true
+      - name: Delete old workflow runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d "${RETAIN_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
+          export CUTOFF="$cutoff"
+          echo "清理 ${cutoff} 之前已完成的运行记录"
+          ids="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" --jq '.workflow_runs[] | select(.status == "completed" and .created_at < $ENV.CUTOFF) | .id')"
+          count=0
+          while IFS= read -r id; do
+            [ -n "$id" ] || continue
+            count=$((count + 1))
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] 将删除运行记录: $id"
+            else
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${id}" >/dev/null \
+                || echo "::warning::删除运行记录 ${id} 失败"
+            fi
+          done <<< "$ids"
+          echo "共处理 ${count} 条运行记录"
