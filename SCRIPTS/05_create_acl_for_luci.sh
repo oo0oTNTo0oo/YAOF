@@ -1,115 +1,28 @@
 #!/bin/bash
-# [CTCGFW]immortalwrt
-# Use it under GPLv3, please.
-# --------------------------------------------------------
-# Script for creating ACL file for each LuCI APP
+# 05_create_acl_for_luci.sh  (在 openwrt/ 目录内运行, 须在 02_prepare_package.sh 之后)
+# 原脚本会给缺少 ACL 的第三方 LuCI 应用自动生成"UCI 读写"授权, 相当于替第三方包授权
+# 这里改成只检查和报告: 不生成、不修改任何文件
+# 参数全部忽略, 以兼容 workflow 里现有的 "-a" 调用
+set -euo pipefail
 
-error_font="\033[31m[Error]$\033[0m "
-success_font="\033[32m[Success]\033[0m "
-info_font="\033[36m[Info]\033[0m "
+ROOT="package/new"
+[ -d "$ROOT" ] || { echo "错误: 找不到 ${ROOT}, 请确认 02_prepare_package.sh 已运行" >&2; exit 1; }
 
-function echo_green_bg() {
-  echo -e "\033[42;37m$1\033[0m"
-}
-
-function echo_yellow_bg() {
-  echo -e "\033[43;37m$1\033[0m"
-}
-
-function echo_red_bg() {
-  echo -e "\033[41;37m$1\033[0m"
-}
-
-function clean_outdated_files() {
-  rm -f "create_acl_for_luci.err" "create_acl_for_luci.warn" "create_acl_for_luci.ok"
-}
-
-function check_if_acl_exist() {
-  ls "$1"/root/usr/share/rpcd/acl.d/*.json >/dev/null 2>&1 && return 0 || return 1
-}
-
-function check_config_files() {
-  [ "$(ls "$1"/root/etc/config/* 2>/dev/null | wc -l)" -ne "1" ] && return 0 || return 1
-}
-
-function get_config_name() {
-  ls "$1"/root/etc/config/* 2>/dev/null | awk -F '/' '{print $NF}'
-}
-
-function create_acl_file() {
-  mkdir -p "$1"
-  echo -e "{
-	\"$2\": {
-		\"description\": \"Grant UCI access for $2\",
-		\"read\": {
-			\"uci\": [ \"$3\" ]
-		},
-		\"write\": {
-			\"uci\": [ \"$3\" ]
-		}
-	}
-}" >"$1/$2.json"
-}
-
-function auto_create_acl() {
-  luci_app_list="$(find package -maxdepth 2 | grep -Eo "package/.+/luci-app-[a-zA-Z0-9_-]+" | sort -s)"
-
-  [ "$(echo -e "${luci_app_list}" | wc -l)" -gt "0" ] && for i in ${luci_app_list}; do
-    if check_if_acl_exist "$i"; then
-      echo_yellow_bg "$i: has ACL file already, skipping..." | tee -a create_acl_for_luci.warn
-    elif check_config_files "$i"; then
-      echo_red_bg "$i: has no/multi config file(s), skipping..." | tee -a create_acl_for_luci.err
-    else
-      create_acl_file "$i/root/usr/share/rpcd/acl.d" "${i##*/}" "$(get_config_name "$i")"
-      echo_green_bg "$i: ACL file has been generated." | tee -a create_acl_for_luci.ok
-    fi
-  done
-}
-
-while getopts "achml:n:p:" input_arg; do
-  case $input_arg in
-  a)
-    clean_outdated_files
-    auto_create_acl
-    exit
-    ;;
-  m)
-    manual_mode=1
-    ;;
-  p)
-    acl_path="$OPTARG"
-    ;;
-  l)
-    luci_name="$OPTARG"
-    ;;
-  n)
-    conf_name="$OPTARG"
-    ;;
-  c)
-    clean_outdated_files
-    exit
-    ;;
-  h | ? | *)
-    echo -e "${info_font}Usage: $0 [-a|-m (-p <path-to-acl>) -l <luci-name> -n <conf-name>|-c]"
-    exit 2
-    ;;
-  esac
-done
-
-[ "$?" -ne "0" ] && exit
-
-if [ "*${manual_mode}*" == "*1*" ]; then
-  acl_path="${acl_path:-root/usr/share/rpcd/acl.d}"
-  if create_acl_file "${acl_path}" "${luci_name}" "${conf_name}"; then
-    echo -e "${success_font}Output file: $(ls "${acl_path}/${luci_name}.json")"
-    echo_green_bg "$(cat "${acl_path}/${luci_name}.json")"
-    echo_green_bg "${luci_name}: ACL file has been generated." >>"create_acl_for_luci.ok"
-    [ -e "create_acl_for_luci.err" ] && sed -i "/${luci_name}/d" "create_acl_for_luci.err"
+found=0
+missing=0
+while IFS= read -r -d '' app; do
+  found=$((found + 1))
+  name="$(basename "$app")"
+  if compgen -G "$app/root/usr/share/rpcd/acl.d/*.json" >/dev/null; then
+    echo "OK    ${name}: 已带 ACL 文件"
   else
-    echo -e "${error_font}Failed to create file ${acl_path}/${luci_name}.json"
-    echo_red_bg "${luci_name}: Failed to create ACL file." >>"create_acl_for_luci.err"
+    echo "WARN  ${name}: 没有 ACL 文件 (${app})" >&2
+    missing=$((missing + 1))
   fi
-else
-  echo -e "${info_font}Usage: $0 [-a|-m -p <path-to-acl> -l <luci-name> -n <conf-name>|-c]"
-  exit 2
+done < <(find "$ROOT" -type d -name 'luci-app-*' -print0)
+
+echo "共检查 ${found} 个 LuCI 应用, 其中 ${missing} 个没有 ACL"
+if [ "$found" -eq 0 ]; then
+  echo "警告: 没有找到任何 luci-app-*, 可能是第三方包的目录结构与预期不同" >&2
 fi
+exit 0
