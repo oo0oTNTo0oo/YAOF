@@ -1,0 +1,94 @@
+#!/bin/sh
+# /etc/uci-defaults/99-network-defaults  (首次开机执行一次, 之后自动删除)
+# 场景: 两个光猫都是桥接, 由 OpenWrt 做两路 PPPoE 拨号(电信 + 移动)
+# 本脚本不包含任何账号密码, 请开机后在 LuCI 里填写
+# 安全兜底: 网口检查不通过时不会修改任何配置, 保留系统默认(eth0 为 LAN)
+
+# ===== 可修改区 =====
+WAN_CT_DEV="eth1"     # 接电信光猫的网口
+WAN_CM_DEV="eth2"     # 接移动光猫的网口
+WAN_CT_VLAN=""        # 电信如需 VLAN 标签, 填 VLAN ID, 否则留空
+WAN_CM_VLAN=""        # 移动如需 VLAN 标签, 填 VLAN ID, 否则留空
+TZ_CODE="CST-8"
+TZ_NAME="Asia/Shanghai"
+# ====================
+
+SYSNET="${SYSNET:-/sys/class/net}"
+log()  { logger -t net-defaults "$*"; }
+fail() { log "跳过网络默认配置: $*"; exit 0; }
+
+# ---- 1. 先检查, 不通过就一个配置都不改 ----
+[ -d "$SYSNET/eth0" ] || fail "找不到 eth0"
+[ "$WAN_CT_DEV" != "$WAN_CM_DEV" ] || fail "两条 WAN 不能使用同一个网口"
+for d in "$WAN_CT_DEV" "$WAN_CM_DEV"; do
+  [ "$d" != "eth0" ] || fail "eth0 保留给 LAN"
+  [ -d "$SYSNET/$d" ] || fail "网口 $d 不存在"
+done
+uci -q get network.lan >/dev/null || fail "找不到 network.lan"
+
+# LAN = eth0 + 除两个 WAN 口以外的其余网口
+LAN_DEVS="eth0"
+for p in "$SYSNET"/eth*; do
+  [ -e "$p" ] || continue
+  n="${p##*/}"
+  case "$n" in
+    eth0|"$WAN_CT_DEV"|"$WAN_CM_DEV") ;;
+    *) LAN_DEVS="$LAN_DEVS $n" ;;
+  esac
+done
+
+CT_IF="$WAN_CT_DEV"; [ -z "$WAN_CT_VLAN" ] || CT_IF="$WAN_CT_DEV.$WAN_CT_VLAN"
+CM_IF="$WAN_CM_DEV"; [ -z "$WAN_CM_VLAN" ] || CM_IF="$WAN_CM_DEV.$WAN_CM_VLAN"
+
+# ---- 2. LAN 桥 ----
+for s in $(uci -q show network | sed -n 's/^network\.\([^.=]*\)=device$/\1/p'); do
+  [ "$(uci -q get "network.$s.name")" = "br-lan" ] && uci -q delete "network.$s"
+done
+uci set network.br_lan=device
+uci set network.br_lan.name='br-lan'
+uci set network.br_lan.type='bridge'
+for d in $LAN_DEVS; do uci add_list network.br_lan.ports="$d"; done
+uci set network.lan.device='br-lan'
+
+# ---- 3. 两路 PPPoE(不写账号密码) ----
+uci -q delete network.wan
+uci -q delete network.wan6
+uci -q delete dhcp.wan
+set_wan() {  # 名称 设备 metric
+  uci set "network.$1=interface"
+  uci set "network.$1.proto=pppoe"
+  uci set "network.$1.device=$2"
+  uci set "network.$1.peerdns=0"
+  uci set "network.$1.metric=$3"
+  uci set "network.$1.ipv6=0"
+}
+set_wan wan_ct "$CT_IF" 10
+set_wan wan_cm "$CM_IF" 20
+
+# ---- 4. 防火墙: 两条 WAN 都放进 wan 区, 入站与转发一律拒绝 ----
+found=0
+for z in $(uci -q show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p'); do
+  if [ "$(uci -q get "firewall.$z.name")" = "wan" ]; then
+    uci -q delete "firewall.$z.network"
+    uci add_list "firewall.$z.network=wan_ct"
+    uci add_list "firewall.$z.network=wan_cm"
+    uci set "firewall.$z.input=REJECT"
+    uci set "firewall.$z.output=ACCEPT"
+    uci set "firewall.$z.forward=REJECT"
+    uci set "firewall.$z.masq=1"
+    uci set "firewall.$z.mtu_fix=1"
+    found=1
+  fi
+done
+[ "$found" = 1 ] || log "警告: 没有找到 wan 防火墙区, 请手动把 wan_ct/wan_cm 加入"
+
+# ---- 5. 时区 ----
+uci set system.@system[0].timezone="$TZ_CODE"
+uci set system.@system[0].zonename="$TZ_NAME"
+
+uci commit network
+uci commit firewall
+uci commit dhcp
+uci commit system
+log "已应用: LAN=[$LAN_DEVS] 电信=$CT_IF 移动=$CM_IF"
+exit 0
