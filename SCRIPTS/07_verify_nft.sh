@@ -27,7 +27,8 @@ forbidden=(
   '^CONFIG_PACKAGE_(miniupnpd[A-Za-z0-9_-]*|luci-app-upnp|luci-i18n-upnp[A-Za-z0-9_-]*)=[ym]$'
   '^CONFIG_PACKAGE_(kmod-shortcut-fe[A-Za-z0-9_-]*|shortcut-fe[A-Za-z0-9_-]*|kmod-fast-classifier|natflow[A-Za-z0-9_-]*)=[ym]$'
   '^CONFIG_PACKAGE_(wpad[A-Za-z0-9_-]*|hostapd[A-Za-z0-9_-]*|wpa-supplicant[A-Za-z0-9_-]*|kmod-cfg80211|kmod-mac80211)=[ym]$'
-  '^CONFIG_PACKAGE_kmod-r8169=[ym]$'
+  '^CONFIG_PACKAGE_(luci-app-passwall|luci-app-ssr-plus|luci-app-openclash|luci-app-homeproxy|luci-app-nikki|luci-app-dae|dae)=[ym]$'
+  '^CONFIG_PACKAGE_kmod-r8125[A-Za-z0-9_-]*=[ym]$'
   '^CONFIG_PACKAGE_dnsmasq_full_ipset=[ym]$'
   '^CONFIG_PACKAGE_luci-compat=[ym]$'
 )
@@ -39,7 +40,7 @@ for pat in "${forbidden[@]}"; do
 done
 
 # 2. 必须出现的包
-required=(firewall4 dnsmasq-full dnsmasq_full_nftset kmod-r8125 mwan3 luci-app-mwan3
+required=(firewall4 dnsmasq-full dnsmasq_full_nftset kmod-r8169 mwan3 luci-app-mwan3
           smartdns luci-app-smartdns adguardhome mosdns luci-app-mosdns
           luci-app-passwall2 kmod-nft-tproxy)
 for p in "${required[@]}"; do
