@@ -3,23 +3,24 @@
 # 在 openwrt/ 源码目录内运行(01_get_ready.sh 之后)
 # 原则: 官方 25.12 源码 + 少量固定 commit 的第三方包, 不打内核或防火墙补丁
 set -euo pipefail
+# 仓库不存在或无权访问时直接失败, 不要停下来等输入用户名
+export GIT_TERMINAL_PROMPT=0
 
 SUPPORTED_KERNEL="6.12"
 
-# 第三方包: 必须填完整的 40 位 commit, 留空会中止(fail closed)
-# 获取方法: git ls-remote <仓库地址> <分支或HEAD>
+# 第三方包: commit 来自仓库变量, 必须是完整 40 位, 留空或格式不对会中止(fail closed)
 MWAN3_REPO="https://github.com/dl12345/mwan3.git"
 MWAN3_COMMIT="${MWAN3_COMMIT:-}"
 LUCI_MWAN3_REPO="https://github.com/dl12345/luci-app-mwan3.git"
 LUCI_MWAN3_COMMIT="${LUCI_MWAN3_COMMIT:-}"
-PW2_REPO="https://github.com/xiaorouji/openwrt-passwall2.git"
+PW2_REPO="https://github.com/Openwrt-Passwall/openwrt-passwall2.git"
 PW2_COMMIT="${PW2_COMMIT:-}"
-PW_PKGS_REPO="https://github.com/xiaorouji/openwrt-passwall-packages.git"
+PW_PKGS_REPO="https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
 PW_PKGS_COMMIT="${PW_PKGS_COMMIT:-}"
 MOSDNS_REPO="https://github.com/sbwml/luci-app-mosdns.git"
 MOSDNS_COMMIT="${MOSDNS_COMMIT:-}"
 
-summary() { [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$*" >> "$GITHUB_STEP_SUMMARY" || true; }
+summary() { if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then echo "$*" >> "$GITHUB_STEP_SUMMARY"; fi; }
 
 # 按完整 commit 拉取并校验
 clone_pinned() {
@@ -28,10 +29,15 @@ clone_pinned() {
     echo "错误: ${dir} 的 commit 必须是 40 位十六进制, 当前值: '${commit}'" >&2
     exit 1
   fi
+  echo "拉取 ${url} @ ${commit}"
   rm -rf "$dir"; mkdir -p "$dir"
   git -C "$dir" init -q
   git -C "$dir" remote add origin "$url"
-  git -C "$dir" fetch -q --depth 1 origin "$commit"
+  if ! git -C "$dir" fetch -q --depth 1 origin "$commit"; then
+    echo "错误: 无法从 ${url} 取得 commit ${commit}" >&2
+    echo "      请确认仓库地址存在(去掉 .git 后能在浏览器打开), 且该 commit 属于这个仓库" >&2
+    exit 1
+  fi
   git -C "$dir" checkout -q FETCH_HEAD
   actual="$(git -C "$dir" rev-parse HEAD)"
   if [ "$actual" != "$commit" ]; then
@@ -43,7 +49,7 @@ clone_pinned() {
   summary "- ${url} @ ${actual}"
 }
 
-# 第三方包同名时, 删除官方 feeds 中的同名包, 并打印出来便于审计
+# 第三方包与官方 feeds 同名时, 删除官方的同名包, 并打印出来便于审计
 dedupe_feeds() {
   local root="$1" mk name p
   while IFS= read -r mk; do
@@ -51,10 +57,23 @@ dedupe_feeds() {
     for p in feeds/*/*/"$name"; do
       if [ -e "$p" ]; then
         echo "覆盖官方 feed 包: $p"
+        summary "- 覆盖官方 feed 包: ${p}"
         rm -rf "$p"
       fi
     done
   done < <(find "$root" -maxdepth 3 -name Makefile)
+}
+
+# 包是否真的存在: 目录里必须有 Makefile(第三方仓库的根目录本身就是包时也算)
+pkg_present() {
+  local p="$1"
+  if [ -n "$(find feeds package/new -maxdepth 4 -path "*/${p}/Makefile" -print -quit)" ]; then
+    return 0
+  fi
+  if grep -rqsE --include=Makefile "^PKG_NAME[[:space:]]*:?=[[:space:]]*${p}[[:space:]]*$" package/new; then
+    return 0
+  fi
+  return 1
 }
 
 ### 1. 校验内核版本(x86) ###
@@ -90,6 +109,7 @@ clone_pinned "$LUCI_MWAN3_REPO"  "$LUCI_MWAN3_COMMIT"  package/new/luci-app-mwan
 clone_pinned "$PW2_REPO"         "$PW2_COMMIT"         package/new/passwall2
 clone_pinned "$PW_PKGS_REPO"     "$PW_PKGS_COMMIT"     package/new/passwall-packages
 clone_pinned "$MOSDNS_REPO"      "$MOSDNS_COMMIT"      package/new/mosdns
+summary "### 被第三方包覆盖的官方包"
 for r in mwan3 luci-app-mwan3 passwall2 passwall-packages mosdns; do
   dedupe_feeds "package/new/$r"
 done
@@ -98,10 +118,11 @@ done
 ./scripts/feeds install -a
 
 ### 5. 检查必需的包是否都存在(缺任何一个就中止) ###
+# 网卡驱动 kmod-r8169 属于内核模块, 不是源码目录, 由 07_verify_nft.sh 校验
 missing=0
 for p in smartdns luci-app-smartdns adguardhome mwan3 luci-app-mwan3 \
-         luci-app-passwall2 mosdns luci-app-mosdns r8125; do
-  if [ -z "$(find feeds package/new -maxdepth 4 -type d -name "$p" -print -quit)" ]; then
+         luci-app-passwall2 mosdns luci-app-mosdns; do
+  if ! pkg_present "$p"; then
     echo "错误: 找不到包 ${p}" >&2
     missing=1
   fi
