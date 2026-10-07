@@ -2,9 +2,12 @@
 # /etc/uci-defaults/99-network-defaults  (首次开机执行一次, 之后自动删除)
 # 场景: 两个光猫都是桥接, 由 OpenWrt 做两路 PPPoE 拨号(电信 + 移动)
 # 本脚本不包含任何账号密码, 请开机后在 LuCI 里填写
-# 安全兜底: 网口检查不通过时不会修改任何配置, 保留系统默认(eth0 为 LAN)
+# 安全兜底: 网口检查不通过时不会修改任何配置, 保留系统默认
+#           (此时 eth0 仍为 LAN, 地址是 192.168.1.1, 不是下面设置的地址)
 
 # ===== 可修改区 =====
+LAN_IPADDR="192.168.11.1"      # 路由器 LAN 地址
+LAN_NETMASK="255.255.255.0"
 WAN_CT_DEV="eth1"     # 接电信光猫的网口
 WAN_CM_DEV="eth2"     # 接移动光猫的网口
 WAN_CT_VLAN=""        # 电信如需 VLAN 标签, 填 VLAN ID, 否则留空
@@ -40,7 +43,7 @@ done
 CT_IF="$WAN_CT_DEV"; [ -z "$WAN_CT_VLAN" ] || CT_IF="$WAN_CT_DEV.$WAN_CT_VLAN"
 CM_IF="$WAN_CM_DEV"; [ -z "$WAN_CM_VLAN" ] || CM_IF="$WAN_CM_DEV.$WAN_CM_VLAN"
 
-# ---- 2. LAN 桥 ----
+# ---- 2. LAN 桥与地址 ----
 for s in $(uci -q show network | sed -n 's/^network\.\([^.=]*\)=device$/\1/p'); do
   [ "$(uci -q get "network.$s.name")" = "br-lan" ] && uci -q delete "network.$s"
 done
@@ -49,6 +52,8 @@ uci set network.br_lan.name='br-lan'
 uci set network.br_lan.type='bridge'
 for d in $LAN_DEVS; do uci add_list network.br_lan.ports="$d"; done
 uci set network.lan.device='br-lan'
+uci set network.lan.ipaddr="$LAN_IPADDR"
+uci set network.lan.netmask="$LAN_NETMASK"
 
 # ---- 3. 两路 PPPoE(不写账号密码) ----
 uci -q delete network.wan
@@ -90,5 +95,5 @@ uci commit network
 uci commit firewall
 uci commit dhcp
 uci commit system
-log "已应用: LAN=[$LAN_DEVS] 电信=$CT_IF 移动=$CM_IF"
+log "已应用: LAN=[$LAN_DEVS] $LAN_IPADDR 电信=$CT_IF 移动=$CM_IF"
 exit 0
