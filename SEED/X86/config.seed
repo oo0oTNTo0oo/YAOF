@@ -1,6 +1,6 @@
 ### ============================================================
 ### YAOF X86 config.seed - 精简 / 纯 nftables / 安全优先
-### 目标: OpenWrt 25.12, x86_64, i7-7500U, r8125, 双线多拨
+### 目标: OpenWrt 25.12, x86_64, i7-7500U, RTL8125 网卡, 双线多拨
 ### 注意: 带 [VERIFY] 的选项名需在检出 feeds 后用 make defconfig 核对
 ### ============================================================
 
@@ -34,10 +34,8 @@ CONFIG_PACKAGE_ppp=y
 CONFIG_PACKAGE_ppp-mod-pppoe=y
 CONFIG_PACKAGE_kmod-pppoe=y
 
-### NIC: 只用 r8125 ###
-CONFIG_PACKAGE_kmod-r8125=y
-# 避免 r8169 与 r8125 同时抢占 RTL8125
-# CONFIG_PACKAGE_kmod-r8169 is not set
+### NIC: RTL8125 使用内核自带的 r8169 驱动(官方源, 不引入第三方内核代码) ###
+CONFIG_PACKAGE_kmod-r8169=y
 # 以下为 x86 默认带的其他网卡驱动。刷机前先用 lspci -nn | grep -i ethernet
 # 确认机器上所有网口都是 Realtek 8125; 若有 Intel 网口, 删掉对应行以保留驱动
 # CONFIG_PACKAGE_kmod-e1000 is not set
@@ -71,7 +69,9 @@ CONFIG_PACKAGE_kmod-nft-nat=y
 # CONFIG_PACKAGE_ipset is not set
 # CONFIG_PACKAGE_nat6 is not set
 
-### DNS: dnsmasq 只负责 DHCP, DNS 链路交给 AdGuardHome / mosdns / smartdns ###
+### DNS ###
+# 首次开机保持 dnsmasq 提供 DNS, 保证一定能上网;
+# AdGuardHome / mosdns / smartdns 的链路配好后, 再在 LuCI 里关闭 dnsmasq 的 DNS 功能
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_dhcp=y
@@ -89,7 +89,7 @@ CONFIG_PACKAGE_adguardhome=y
 CONFIG_PACKAGE_mosdns=y
 CONFIG_PACKAGE_luci-app-mosdns=y
 
-### MULTI-WAN: mwan3-nft (dl12345, 需作为自定义 feed 并固定 commit) ###
+### MULTI-WAN: mwan3-nft (dl12345, 固定 commit 后从源码编译) ###
 CONFIG_PACKAGE_mwan3=y
 CONFIG_PACKAGE_luci-app-mwan3=y
 
