@@ -26,6 +26,7 @@ forbidden=(
   '^CONFIG_PACKAGE_kmod-(ipt|ip6t)-[A-Za-z0-9_-]*=[ym]$'
   '^CONFIG_PACKAGE_(miniupnpd[A-Za-z0-9_-]*|luci-app-upnp|luci-i18n-upnp[A-Za-z0-9_-]*)=[ym]$'
   '^CONFIG_PACKAGE_(kmod-shortcut-fe[A-Za-z0-9_-]*|shortcut-fe[A-Za-z0-9_-]*|kmod-fast-classifier|natflow[A-Za-z0-9_-]*)=[ym]$'
+  '^CONFIG_PACKAGE_(wpad[A-Za-z0-9_-]*|hostapd[A-Za-z0-9_-]*|wpa-supplicant[A-Za-z0-9_-]*|kmod-cfg80211|kmod-mac80211)=[ym]$'
   '^CONFIG_PACKAGE_kmod-r8169=[ym]$'
   '^CONFIG_PACKAGE_dnsmasq_full_ipset=[ym]$'
   '^CONFIG_PACKAGE_luci-compat=[ym]$'
