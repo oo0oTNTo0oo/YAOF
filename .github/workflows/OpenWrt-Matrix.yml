@@ -189,13 +189,27 @@ jobs:
         if: inputs.build_firmware
         working-directory: openwrt
         run: |
-          mm="$(sed -n 's/^GO_VERSION_MAJOR_MINOR:=//p' feeds/packages/lang/golang/golang/Makefile | head -n1)"
-          pp="$(sed -n 's/^GO_VERSION_PATCH:=//p' feeds/packages/lang/golang/golang/Makefile | head -n1)"
-          if [ -z "$mm" ]; then
+          norm() { case "$1" in *.*.*) echo "$1" ;; *) echo "$1.0" ;; esac; }
+          # 官方 feeds 的 Go 版本: 优先取 make download 下载的 Go 源码包名里最高的版本(引导用的旧版本更低)
+          have="$(find dl -maxdepth 1 -type f -name 'go[0-9]*.src.tar.*' -printf '%f\n' 2>/dev/null \
+            | sed -n 's/^go\([0-9][0-9]*\.[0-9][0-9]*\(\.[0-9][0-9]*\)\{0,1\}\)\.src\.tar\..*/\1/p' | sort -V | tail -n1)"
+          if [ -z "$have" ]; then
+            # 备用: 读 golang 包 Makefile(官方按版本分目录: golang1.27/Makefile, 旧布局是 golang/Makefile), 取最高版本
+            have="$(
+              for mk in feeds/packages/lang/golang/golang*/Makefile; do
+                [ -f "$mk" ] || continue
+                mm="$(sed -nE 's/^GO_VERSION_MAJOR_MINOR[[:space:]]*:?=[[:space:]]*([0-9]+\.[0-9]+).*/\1/p' "$mk" | head -n1)"
+                pp="$(sed -nE 's/^GO_VERSION_PATCH[[:space:]]*:?=[[:space:]]*([0-9]+).*/\1/p' "$mk" | head -n1)"
+                if [ -n "$mm" ]; then echo "${mm}.${pp:-0}"; fi
+              done | sort -V | tail -n1
+            )"
+          fi
+          if [ -z "$have" ]; then
             echo "::warning::读不到官方 feeds 的 Go 版本, 跳过预检"
+            grep -rn 'GO_VERSION' feeds/packages/lang/golang 2>/dev/null | head -n 10 || true
             exit 0
           fi
-          have="${mm}.${pp:-0}"
+          have="$(norm "$have")"
           echo "官方 feeds 提供的 Go 版本: ${have}"
           bad=0
           checked=0
@@ -207,6 +221,7 @@ jobs:
               echo "  $(basename "$f"): 读不到 go.mod, 跳过"
               continue
             fi
+            req="$(norm "$req")"
             checked=$((checked + 1))
             if [ "$(printf '%s\n%s\n' "$req" "$have" | sort -V | head -n1)" = "$req" ]; then
               echo "  OK    $(basename "$f") 需要 Go >= ${req}"
