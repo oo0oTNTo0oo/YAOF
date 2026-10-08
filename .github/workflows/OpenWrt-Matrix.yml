@@ -150,6 +150,7 @@ jobs:
             echo "- passwall2: ${PW2_COMMIT}"
             echo "- passwall-packages: ${PW_PKGS_COMMIT}"
             echo "- luci-app-mosdns: ${MOSDNS_COMMIT}"
+            echo "- openwrt/packages (lang/golang): ${GOLANG_COMMIT}"
             echo "- workflow commit: ${GITHUB_SHA}"
             echo "## Official feeds"
             for d in openwrt/feeds/*/; do
