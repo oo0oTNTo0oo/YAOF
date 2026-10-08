@@ -48,6 +48,7 @@ jobs:
       PW2_COMMIT: ${{ vars.PW2_COMMIT }}
       PW_PKGS_COMMIT: ${{ vars.PW_PKGS_COMMIT }}
       MOSDNS_COMMIT: ${{ vars.MOSDNS_COMMIT }}
+      GOLANG_COMMIT: ${{ vars.GOLANG_COMMIT }}
       # 可选: 留空则自动取 25.12 最新正式 tag
       OPENWRT_REF: ${{ vars.OPENWRT_REF }}
       OPENWRT_COMMIT: ${{ vars.OPENWRT_COMMIT }}
@@ -62,7 +63,7 @@ jobs:
       - name: Check required variables
         run: |
           missing=0
-          for v in MWAN3_COMMIT LUCI_MWAN3_COMMIT PW2_COMMIT PW_PKGS_COMMIT MOSDNS_COMMIT; do
+          for v in MWAN3_COMMIT LUCI_MWAN3_COMMIT PW2_COMMIT PW_PKGS_COMMIT MOSDNS_COMMIT GOLANG_COMMIT; do
             val="${!v:-}"
             if ! [[ "$val" =~ ^[0-9a-f]{40}$ ]]; then
               echo "错误: 仓库变量 ${v} 未设置, 或不是 40 位 commit" >&2
