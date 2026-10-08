@@ -19,6 +19,10 @@ PW_PKGS_REPO="https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
 PW_PKGS_COMMIT="${PW_PKGS_COMMIT:-}"
 MOSDNS_REPO="https://github.com/sbwml/luci-app-mosdns.git"
 MOSDNS_COMMIT="${MOSDNS_COMMIT:-}"
+# 官方 openwrt/packages 的固定提交, 只取其中的 lang/golang
+# (xray-core / sing-box 的新版本要求比 25.12 分支更新的 Go)
+GOLANG_REPO="https://github.com/openwrt/packages.git"
+GOLANG_COMMIT="${GOLANG_COMMIT:-}"
 
 summary() { if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then echo "$*" >> "$GITHUB_STEP_SUMMARY"; fi; }
 
@@ -114,7 +118,25 @@ for r in mwan3 luci-app-mwan3 passwall2 passwall-packages mosdns; do
   dedupe_feeds "package/new/$r"
 done
 
-### 4. 安装 feeds ###
+### 3.5 用官方 openwrt/packages 固定提交里的 lang/golang 替换 25.12 feeds 里的 Go ###
+summary "### 替换 Go 工具链包(官方 openwrt/packages 固定提交)"
+gtmp="$(mktemp -d)"
+clone_pinned "$GOLANG_REPO" "$GOLANG_COMMIT" "$gtmp/packages"
+# 官方现在按版本分目录(golang1.27/Makefile), 旧布局是 golang/Makefile, 两种都接受
+if [ ! -f "$gtmp/packages/lang/golang/golang-package.mk" ] || ! compgen -G "$gtmp/packages/lang/golang/golang*/Makefile" >/dev/null; then
+  echo "错误: 提交 ${GOLANG_COMMIT} 里没有预期的 lang/golang 结构(需要 golang-package.mk 和 golang*/Makefile)" >&2
+  exit 1
+fi
+echo "lang/golang 目录内容:"
+ls "$gtmp/packages/lang/golang"
+rm -rf feeds/packages/lang/golang
+cp -a "$gtmp/packages/lang/golang" feeds/packages/lang/golang
+rm -rf "$gtmp"
+echo "已用 ${GOLANG_REPO} @ ${GOLANG_COMMIT} 的 lang/golang 替换官方 25.12 feed 里的版本"
+
+### 4. 重建 feeds 索引并安装 ###
+# golang 目录被替换后, 旧索引已过期, 必须先重建
+./scripts/feeds update -i
 ./scripts/feeds install -a
 
 ### 5. 检查必需的包是否都存在(缺任何一个就中止) ###
