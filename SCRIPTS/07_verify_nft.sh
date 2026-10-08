@@ -30,7 +30,6 @@ forbidden=(
   '^CONFIG_PACKAGE_(luci-app-passwall|luci-app-ssr-plus|luci-app-openclash|luci-app-homeproxy|luci-app-nikki|luci-app-dae|dae)=[ym]$'
   '^CONFIG_PACKAGE_kmod-r8125[A-Za-z0-9_-]*=[ym]$'
   '^CONFIG_PACKAGE_dnsmasq_full_ipset=[ym]$'
-  '^CONFIG_PACKAGE_luci-compat=[ym]$'
 )
 for pat in "${forbidden[@]}"; do
   if hits="$(grep -E "$pat" "$CFG")"; then
@@ -42,7 +41,7 @@ done
 # 2. 必须出现的包
 required=(firewall4 dnsmasq-full dnsmasq_full_nftset kmod-r8169 mwan3 luci-app-mwan3
           smartdns luci-app-smartdns adguardhome mosdns luci-app-mosdns
-          luci-app-passwall2 kmod-nft-tproxy)
+          luci-app-passwall2 kmod-nft-tproxy xray-core sing-box)
 for p in "${required[@]}"; do
   grep -qE "^CONFIG_PACKAGE_${p}=y$" "$CFG" || err "缺少 ${p}"
 done
@@ -54,6 +53,10 @@ if hits="$(grep -Ei '^CONFIG_PACKAGE_luci-app-passwall2_[A-Za-z0-9_-]*iptables[A
 fi
 echo "--- passwall2 相关配置(请人工确认使用 nftables 透明代理) ---"
 grep -E '^CONFIG_PACKAGE_luci-app-passwall2' "$CFG" || true
+echo "--- 最终会编进固件的代理相关组件(请人工确认) ---"
+grep -E '^CONFIG_PACKAGE_(xray-core|sing-box|hysteria|naiveproxy|chinadns-ng|geoview|v2ray-geo[A-Za-z0-9_-]*|haproxy|shadowsocks[A-Za-z0-9_-]*|simple-obfs|v2ray-plugin|tcping|luci-compat)=' "$CFG" || true
+echo "--- 引入 luci-compat 的第三方包(只查 package/new) ---"
+grep -rl --include=Makefile 'luci-compat' package/new 2>/dev/null || echo "(package/new 下没有 Makefile 提到 luci-compat, 可能由官方 feeds 的包引入)"
 echo "---"
 
 # 4. 禁止关闭 CPU 漏洞缓解(只检查实际存在的目录)
