@@ -183,12 +183,65 @@ jobs:
         working-directory: openwrt
         run: make download -j8
 
+      - name: Check Go toolchain
+        if: inputs.build_firmware
+        working-directory: openwrt
+        run: |
+          mm="$(sed -n 's/^GO_VERSION_MAJOR_MINOR:=//p' feeds/packages/lang/golang/golang/Makefile | head -n1)"
+          pp="$(sed -n 's/^GO_VERSION_PATCH:=//p' feeds/packages/lang/golang/golang/Makefile | head -n1)"
+          if [ -z "$mm" ]; then
+            echo "::warning::读不到官方 feeds 的 Go 版本, 跳过预检"
+            exit 0
+          fi
+          have="${mm}.${pp:-0}"
+          echo "官方 feeds 提供的 Go 版本: ${have}"
+          bad=0
+          checked=0
+          while IFS= read -r f; do
+            top="$(tar -tf "$f" 2>/dev/null | sed -n '1p')"
+            top="${top%%/*}"
+            req="$(tar -xOf "$f" "${top}/go.mod" 2>/dev/null | sed -n 's/^go[[:space:]][[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -n1)"
+            if [ -z "$req" ]; then
+              echo "  $(basename "$f"): 读不到 go.mod, 跳过"
+              continue
+            fi
+            checked=$((checked + 1))
+            if [ "$(printf '%s\n%s\n' "$req" "$have" | sort -V | head -n1)" = "$req" ]; then
+              echo "  OK    $(basename "$f") 需要 Go >= ${req}"
+            else
+              echo "错误: $(basename "$f") 需要 Go >= ${req}, 但官方 feeds 只有 ${have}" >&2
+              bad=1
+            fi
+          done < <(find dl -maxdepth 1 -type f \( -iname 'xray-core-*.tar.*' -o -iname 'sing-box-*.tar.*' \) | sort)
+          if [ "$checked" -eq 0 ]; then
+            echo "::warning::没有找到可核对的 xray-core / sing-box 源码包, 未能预检 Go 版本"
+          fi
+          if [ "$bad" -ne 0 ]; then
+            echo "Go 版本不够, 继续编译必然失败, 已中止" >&2
+            exit 1
+          fi
+
       - name: Compile
         if: inputs.build_firmware
         working-directory: openwrt
         run: |
-          # 不使用 IGNORE_ERRORS: 任何包编译失败都必须让构建失败
-          make -j"$(($(nproc) + 1))" || make -j1 V=s
+          # -k: 某个包失败后继续编译其他互不依赖的包, 一次运行就能看到所有失败的包
+          if make -k -j"$(($(nproc) + 1))" 2>&1 | tee ../build-pass1.log; then
+            exit 0
+          fi
+          echo "::error::首次编译失败, 下面单独重跑失败的包, 输出完整错误"
+          mapfile -t failed < <(grep -oE 'ERROR: package/[^ ]+ failed to build' ../build-pass1.log | awk '{print $2}' | sort -u)
+          if [ "${#failed[@]}" -eq 0 ]; then
+            echo "没有解析到失败的包, 打印日志末尾:"
+            tail -n 150 ../build-pass1.log
+          fi
+          for p in "${failed[@]}"; do
+            echo "::group::重跑 ${p}"
+            make "${p}/clean" >/dev/null 2>&1 || true
+            make "${p}/compile" -j1 V=s 2>&1 | tail -n 200 || true
+            echo "::endgroup::"
+          done
+          exit 1
 
       - name: Audit rootfs permissions
         if: inputs.build_firmware
@@ -257,6 +310,7 @@ jobs:
         with:
           name: x86-failure-logs
           path: |
+            build-pass1.log
             openwrt/logs/
             openwrt/.config
           retention-days: 7
