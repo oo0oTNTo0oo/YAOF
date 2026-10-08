@@ -107,6 +107,8 @@ CONFIG_PACKAGE_sing-box=y
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client is not set
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs is not set
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin is not set
+# Shadowsocks-Rust 是 Rust 写的, 编译要先编出整套 Rust 工具链, 非常耗时; xray/sing-box 本身都支持 SS 协议
+# CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client is not set
 
 ### LUCI ###
 CONFIG_PACKAGE_luci=y
