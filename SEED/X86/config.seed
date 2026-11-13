@@ -1,6 +1,6 @@
 ### ============================================================
-### YAOF X86 config.seed - 精简 / 纯 nftables / 安全优先
-### 目标: OpenWrt 25.12, x86_64, i7-7500U, RTL8125 网卡, 双线多拨
+### config.seed - 精简 / 纯 nftables / 安全优先
+### 目标: OpenWrt 25.12, x86_64
 ### 注意: 带 [VERIFY] 的选项名需在检出 feeds 后用 make defconfig 核对
 ### ============================================================
 
@@ -26,20 +26,19 @@ CONFIG_PKG_FORTIFY_SOURCE_2=y
 CONFIG_PKG_RELRO_FULL=y
 
 ### CPU / 基础 ###
-# Intel CPU 微码, 修补 CPU 层面安全漏洞
+# CPU 微码
 CONFIG_PACKAGE_intel-microcode=y
 CONFIG_PACKAGE_kmod-hwmon-coretemp=y
 CONFIG_PACKAGE_ethtool=y
 CONFIG_PACKAGE_ppp=y
 CONFIG_PACKAGE_ppp-mod-pppoe=y
 CONFIG_PACKAGE_kmod-pppoe=y
-# DNS 诊断: dig 可以指定端口, 逐层测试 AdGuardHome / MosDNS / SmartDNS [VERIFY 包名]
+# DNS 诊断工具 [VERIFY 包名]
 CONFIG_PACKAGE_bind-dig=y
 
-### NIC: RTL8125 使用内核自带的 r8169 驱动(官方源, 不引入第三方内核代码) ###
+### NIC: 使用内核自带驱动(官方源) ###
 CONFIG_PACKAGE_kmod-r8169=y
-# 以下为 x86 默认带的其他网卡驱动。刷机前先用 lspci -nn | grep -i ethernet
-# 确认机器上所有网口都是 Realtek 8125; 若有 Intel 网口, 删掉对应行以保留驱动
+# 其余网卡驱动不需要, 按实际硬件调整
 # CONFIG_PACKAGE_kmod-e1000 is not set
 # CONFIG_PACKAGE_kmod-e1000e is not set
 # CONFIG_PACKAGE_kmod-igb is not set
@@ -72,10 +71,7 @@ CONFIG_PACKAGE_kmod-nft-nat=y
 # CONFIG_PACKAGE_nat6 is not set
 
 ### DNS ###
-# 链路: 局域网设备 -> dnsmasq(192.168.11.1:53) -> AdGuardHome(127.0.0.1:6353)
-#        -> MosDNS(127.0.0.1:5335) -> SmartDNS(127.0.0.1:6053) / 远程 DoH
-# dnsmasq 始终是对内的 DNS 入口, 不关闭; 刷机后三个组件配好之前, 它直接使用两条 WAN 的 DNS。
-# 配好之后, 见 99-zz-hardening-defaults 开头的四行命令, 把 dnsmasq 切到 AdGuardHome。
+# dnsmasq 保留为 DNS 入口, 上游在刷机后配置
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_dhcp=y
@@ -93,22 +89,22 @@ CONFIG_PACKAGE_adguardhome=y
 CONFIG_PACKAGE_mosdns=y
 CONFIG_PACKAGE_luci-app-mosdns=y
 
-### MULTI-WAN: mwan3-nft (dl12345, 固定 commit 后从源码编译) ###
+### 多线路 (固定 commit, 从源码编译) ###
 CONFIG_PACKAGE_mwan3=y
 CONFIG_PACKAGE_luci-app-mwan3=y
 
-### PROXY: passwall2 (nftables 透明代理) [VERIFY 选项名] ###
+### passwall2 (nftables) [VERIFY 选项名] ###
 CONFIG_PACKAGE_luci-app-passwall2=y
 CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y
 # CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy is not set
-# passwall2 没有 Xray / Sing-Box 的 INCLUDE 选项(那是 passwall1 的写法), 直接选择核心包
+# 核心包直接选择, 没有对应的 INCLUDE 选项
 CONFIG_PACKAGE_xray-core=y
 CONFIG_PACKAGE_sing-box=y
 # 关闭已淘汰或用不到的默认组件
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client is not set
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs is not set
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin is not set
-# Shadowsocks-Rust 是 Rust 写的, 编译要先编出整套 Rust 工具链, 非常耗时; xray/sing-box 本身都支持 SS 协议
+# 该组件需要完整 Rust 工具链, 编译耗时, 不选
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client is not set
 
 ### LUCI ###
@@ -118,14 +114,14 @@ CONFIG_PACKAGE_luci-ssl=y
 CONFIG_LUCI_LANG_zh_Hans=y
 CONFIG_PACKAGE_luci-theme-bootstrap=y
 # CONFIG_PACKAGE_luci-nginx is not set
-# luci-compat 是官方 LuCI 的 Lua 兼容层, 由 passwall2 的界面依赖引入, 不再强行禁止
+# luci-compat 由其他软件包依赖引入, 不强行禁止
 
 ### TCP ###
 # 注意: 主线内核的 bbr 是 BBRv1, 不是 BBRv3
 CONFIG_PACKAGE_kmod-tcp-bbr=y
 
-### ============ 可选, 按需取消注释 ============
-# CONFIG_PACKAGE_luci-proto-wireguard=y     # 远程接入, 比开放端口转发更安全
-# CONFIG_PACKAGE_luci-app-ddns=y            # 公网 IP 动态解析
+### ============ 可选 ============
+# CONFIG_PACKAGE_luci-proto-wireguard=y
+# CONFIG_PACKAGE_luci-app-ddns=y
 # CONFIG_PACKAGE_ddns-scripts-cloudflare=y
-# CONFIG_PACKAGE_luci-app-sqm=y             # 双线下需单独规划, 不建议默认开
+# CONFIG_PACKAGE_luci-app-sqm=y
