@@ -2,7 +2,7 @@
 # /etc/uci-defaults/99-zz-hardening-defaults  (首次开机执行一次, 之后自动删除)
 # 必须排在 99-network-defaults 之后(名字里的 zz 保证了顺序), 因为要用到 wan_ct / wan_cm
 # 内容: 1) 两条 WAN 使用自己指定的 DNS  2) dnsmasq 关缓存  3) 防火墙收紧  4) SSH 与 LuCI 加固
-# 不包含任何账号、密码、节点信息
+# 不包含任何账号、密码、节点信息, 也不包含个人设置(例如 SSH 端口)
 #
 # 说明: 本脚本不把 dnsmasq 切到 AdGuard Home 链路, 因为刚刷完机时 AdGuard Home / MosDNS / SmartDNS
 #       还没有配置, 先保证能上网。三个组件都配好之后, 手动执行下面四行把链路接上:
@@ -61,7 +61,11 @@ add_block Block-External-DoT 853
 uci -q get "firewall.@defaults[0]" >/dev/null && uci set "firewall.@defaults[0].flow_offloading=$FLOW_OFFLOAD"
 
 # ---- 4. SSH 只监听局域网; LuCI 自动跳转 HTTPS ----
-uci -q get "dropbear.@dropbear[0]" >/dev/null && uci set "dropbear.@dropbear[0].Interface=lan"
+# 注意: 这里不设置 SSH 端口。端口属于个人设置, 不写进公开仓库, 刷机后自己用命令修改
+if uci -q get "dropbear.@dropbear[0]" >/dev/null; then
+  uci set "dropbear.@dropbear[0].Interface=lan"
+  uci set "dropbear.@dropbear[0].DirectInterface=lan"
+fi
 uci -q get "uhttpd.main" >/dev/null && uci set "uhttpd.main.redirect_https=1"
 
 uci commit network
