@@ -106,6 +106,8 @@ CONFIG_PACKAGE_sing-box=y
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin is not set
 # 该组件需要完整 Rust 工具链, 编译耗时, 不选
 # CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client is not set
+# CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy is not set
+
 
 ### LUCI ###
 CONFIG_PACKAGE_luci=y
